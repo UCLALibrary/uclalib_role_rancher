@@ -1,2 +1,15 @@
 ---
 # handlers file for uclalib_role_rancher
+
+- name: Remove cert-manager credential manifest
+  file:
+    path: '{{ rancher_certmanager_manifest.path }}'
+    state: absent
+  check_mode: false
+  changed_when: false
+
+- name: Remove helm installer
+  file:
+    path: '{{ helm_installer.path }}'
+    state: absent
+  check_mode: false

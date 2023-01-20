@@ -1,2 +1,6 @@
 ---
 # defaults file for uclalib_role_rancher
+
+# rancher.yml
+# set install_or_upgrade to 'upgrade' to use this play to upgrade rancher
+install_or_upgrade: 'install'

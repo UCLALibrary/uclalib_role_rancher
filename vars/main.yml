@@ -1,2 +1,5 @@
 ---
 # vars file for uclalib_role_rancher
+
+architecture_translation:
+  x86_64: amd64  # ansible_architecture is x86_64, uri is amd64

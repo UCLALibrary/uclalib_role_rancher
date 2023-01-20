@@ -1,0 +1,117 @@
+---
+
+- name: Install prerequisite packages
+  package:
+    name: '{{ item }}'
+    state: present
+  become: true
+  loop:
+    - ['epel-release', 'gcc', 'gcc-c++', 'python3-devel']
+    # gcc/g++/etc for the pyhelm module
+    - python3-openshift
+  when: use_kubernetes_module
+
+- name: Add required python modules
+  pip:
+    name: '{{ item.module }}'
+    version: '{{ item.version }}'
+    state: present
+    extra_args: "--user"
+  loop:
+    - {module: protobuf, version: '<=4'}
+    # anything newer requires python 3.7+
+    - {module: pyhelm, version: '2.11.5'}
+  when: use_kubernetes_module
+
+- name: Add Rancher Repo
+  command:
+    # yamllint disable-line rule:line-length
+    cmd: helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
+  register: rancher_add_repo
+  # yamllint disable-line rule:line-length
+  changed_when: '"has been added to your repositories" in rancher_add_repo.stdout'
+
+- name: Create namespace (k8s module)
+  k8s:
+    kind: namespace
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    name: cattle-system
+  when: use_kubernetes_module
+
+- name: Create namespace (command module)
+  command:
+    cmd: kubectl create namespace cattle-system
+  register: namespace_create
+  changed_when: '"AlreadyExists" not in namespace_create.stderr'
+  failed_when:
+    - namespace_create.rc != 0
+    - '"AlreadyExists" not in namespace_create.stderr'
+
+- name: Make tempfile for cert-manager credential manifest
+  tempfile:
+    state: file
+  register: rancher_certmanager_manifest
+  notify: Remove cert-manager credential manifest
+  check_mode: false
+  changed_when: false
+
+- name: Get cert-manager credential manifest
+  get_url:
+    # yamllint disable-line rule:line-length
+    url: https://github.com/jetstack/cert-manager/releases/download/{{ rancher_certmanager_version }}/cert-manager.crds.yaml
+    dest: '{{ rancher_certmanager_manifest.path }}'
+    force: true  # Otherwise get "HTTP Error 304: Not Modified"
+  changed_when: false
+
+- name: Apply cert-manager manifest (k8s module)
+  k8s:
+    src: '{{ rancher_certmanager_manifest.path }}'
+    apply: true
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+  no_log: true  # this takes a full minute by itself
+  when: use_kubernetes_module
+
+- name: Apply cert-manager CRDs (command module)
+  command:
+    cmd: kubectl apply -f {{ rancher_certmanager_manifest.path }}
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: crd
+  changed_when: '"configured" in crd.stdout'
+  when: not use_kubernetes_module
+
+- name: Add Jetstack Repo
+  command:
+    cmd: helm repo add jetstack https://charts.jetstack.io
+  register: jetstack_add_repo
+  # yamllint disable-line rule:line-length
+  changed_when: '"has been added to your repositories" in jetstack_add_repo.stdout'
+
+- name: Update helm repositories
+  command:
+    cmd: helm repo update
+  changed_when: false  # Adminstrative change, not configuration.
+
+# yamllint disable-line rule:line-length
+- name: Apply Rancher manifest
+  command:
+    cmd: |
+      helm {{ install_or_upgrade | default('install') }}
+        rancher rancher-stable/rancher
+        --namespace cattle-system
+        --set hostname={{ ansible_fqdn }}
+        --set replicas=1
+        --set bootstrapPassword={{ rancher_password }}
+        --set ingress.tls.source=secret
+        --set privateCA=true
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: manifest
+  changed_when:
+    - '"cannot re-use a name that is still in use" not in manifest.stderr'
+  failed_when:
+    - manifest.rc != 0
+    - '"cannot re-use a name that is still in use" not in manifest.stderr'
+- name: Manifest Output
+  debug:
+    var: manifest
