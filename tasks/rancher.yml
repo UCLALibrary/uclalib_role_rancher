@@ -63,38 +63,64 @@
 - name: Install Cert Manager with CRDs
   command:
     cmd: |
-      helm upgrade --install 
+      helm {{ install_or_upgrade | default('install') }}
       cert-manager jetstack/cert-manager
       --namespace cert-manager
       --create-namespace
       --version {{ cert_manager_version }}
       --set installCRDs=true
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: manifest
+  changed_when:
+    - '"cannot re-use a name that is still in use" not in manifest.stderr'
+  failed_when:
+    - manifest.rc != 0
+    - '"cannot re-use a name that is still in use" not in manifest.stderr'
 
 # yamllint disable-line rule:line-length
-- name: Install Sectigo ACME if configured
-  command:
-    cmd: |
-      kubectl create secret -n cert-manager generic sectigo-acme-issueraccount-rsa-pem --from-literal=tls.key= {{ sectigo_eab_credentials }} --type=Opaque
-      kubectl apply -f - <<EOF
-      apiVersion: cert-manager.io/v1
-      kind: ClusterIssuer
-      metadata:
-        name: sectigo-acme-clusterissuer
-        namespace: cert-manager
-      spec:
-        acme:
-          disableAccountKeyGeneration: true
-          email: devsupport@library.ucla.edu
-          preferredChain: ""
-          privateKeySecretRef:
-            name: sectigo-acme-issueraccount-rsa-pem
-          server: https://acme.sectigo.com/v2/InCommonRSAOV
-          solvers:
-          - http01:
-              ingress:
-                class: traefik
-      EOF
+- name: Install Sectigo ACME Secret if configured
+  shell: |
+    kubectl apply -f - <<EOF
+    apiVersion: v1
+    data:
+      tls.key: {{ sectigo_eab_credentials }}
+    kind: Secret
+    metadata:
+      name: sectigo-acme-issueraccount-rsa-pem
+      namespace: cert-manager
+    type: Opaque
+    EOF
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   when: sectigo_eab_credentials is defined
+
+# yamllint disable-line rule:line-length
+- name: Install Sectigo ACME ClusterIssuer if configured
+  shell: |
+    kubectl apply -f - <<EOF
+    ---
+    apiVersion: cert-manager.io/v1
+    kind: ClusterIssuer
+    metadata:
+      name: sectigo-acme-clusterissuer
+      namespace: cert-manager
+    spec:
+      acme:
+        disableAccountKeyGeneration: true
+        email: devsupport@library.ucla.edu
+        privateKeySecretRef:
+          name: sectigo-acme-issueraccount-rsa-pem
+        server: https://acme.sectigo.com/v2/InCommonRSAOV
+        solvers:
+        - http01:
+            ingress:
+              class: traefik
+    EOF
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  when: sectigo_eab_credentials is defined
+
 
 # yamllint disable-line rule:line-length
 - name: Apply Rancher manifest
@@ -108,6 +134,7 @@
         --set bootstrapPassword={{ rancher_password }}
         --set ingress.tls.source=secret
         --set privateCA=true
+        --set global.cattle.psp.enabled=false
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   register: manifest
@@ -129,7 +156,8 @@
         --set replicas=1
         --set bootstrapPassword={{ rancher_password }}
         --set ingress.tls.source=secret
-        --set ingress.extraAnnotations.'cert-manager\.io/cluster-issuer'=sectigo-acme-clusterissuer
+        --set ingress.extraAnnotations."cert-manager\.io/cluster-issuer"=sectigo-acme-clusterissuer
+        --set global.cattle.psp.enabled=false
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   register: manifest
