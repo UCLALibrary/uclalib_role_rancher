@@ -47,39 +47,6 @@
     - namespace_create.rc != 0
     - '"AlreadyExists" not in namespace_create.stderr'
 
-- name: Make tempfile for cert-manager credential manifest
-  tempfile:
-    state: file
-  register: rancher_certmanager_manifest
-  notify: Remove cert-manager credential manifest
-  check_mode: false
-  changed_when: false
-
-- name: Get cert-manager credential manifest
-  get_url:
-    # yamllint disable-line rule:line-length
-    url: https://github.com/jetstack/cert-manager/releases/download/{{ rancher_certmanager_version }}/cert-manager.crds.yaml
-    dest: '{{ rancher_certmanager_manifest.path }}'
-    force: true  # Otherwise get "HTTP Error 304: Not Modified"
-  changed_when: false
-
-- name: Apply cert-manager manifest (k8s module)
-  k8s:
-    src: '{{ rancher_certmanager_manifest.path }}'
-    apply: true
-    kubeconfig: /etc/rancher/k3s/k3s.yaml
-  no_log: true  # this takes a full minute by itself
-  when: use_kubernetes_module
-
-- name: Apply cert-manager CRDs (command module)
-  command:
-    cmd: kubectl apply -f {{ rancher_certmanager_manifest.path }}
-  environment:
-    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
-  register: crd
-  changed_when: '"configured" in crd.stdout'
-  when: not use_kubernetes_module
-
 - name: Add Jetstack Repo
   command:
     cmd: helm repo add jetstack https://charts.jetstack.io
@@ -91,6 +58,43 @@
   command:
     cmd: helm repo update
   changed_when: false  # Adminstrative change, not configuration.
+
+# yamllint disable-line rule:line-length
+- name: Install Cert Manager with CRDs
+  command:
+    cmd: |
+      helm upgrade --install 
+      cert-manager jetstack/cert-manager
+      --namespace cert-manager
+      --create-namespace
+      --version {{ cert_manager_version }}
+      --set installCRDs=true
+
+# yamllint disable-line rule:line-length
+- name: Install Sectigo ACME if configured
+  command:
+    cmd: |
+      kubectl create secret -n cert-manager generic sectigo-acme-issueraccount-rsa-pem --from-literal=tls.key= {{ sectigo_eab_credentials }} --type=Opaque
+      kubectl apply -f - <<EOF
+      apiVersion: cert-manager.io/v1
+      kind: ClusterIssuer
+      metadata:
+        name: sectigo-acme-clusterissuer
+        namespace: cert-manager
+      spec:
+        acme:
+          disableAccountKeyGeneration: true
+          email: devsupport@library.ucla.edu
+          preferredChain: ""
+          privateKeySecretRef:
+            name: sectigo-acme-issueraccount-rsa-pem
+          server: https://acme.sectigo.com/v2/InCommonRSAOV
+          solvers:
+          - http01:
+              ingress:
+                class: traefik
+      EOF
+  when: sectigo_eab_credentials is defined
 
 # yamllint disable-line rule:line-length
 - name: Apply Rancher manifest
@@ -112,6 +116,30 @@
   failed_when:
     - manifest.rc != 0
     - '"cannot re-use a name that is still in use" not in manifest.stderr'
+  when: sectigo_eab_credentials is undefined
+
+# yamllint disable-line rule:line-length
+- name: Apply Rancher manifest configured with Sectigo
+  command:
+    cmd: |
+      helm {{ install_or_upgrade | default('install') }}
+        rancher rancher-stable/rancher
+        --namespace cattle-system
+        --set hostname={{ ansible_fqdn }}
+        --set replicas=1
+        --set bootstrapPassword={{ rancher_password }}
+        --set ingress.tls.source=secret
+        --set ingress.extraAnnotations.'cert-manager\.io/cluster-issuer'=sectigo-acme-clusterissuer
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: manifest
+  changed_when:
+    - '"cannot re-use a name that is still in use" not in manifest.stderr'
+  failed_when:
+    - manifest.rc != 0
+    - '"cannot re-use a name that is still in use" not in manifest.stderr'
+  when: sectigo_eab_credentials is defined
+
 - name: Manifest Output
   debug:
     var: manifest

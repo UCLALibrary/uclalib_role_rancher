@@ -1,2 +1,9 @@
----
 # tasks file for uclalib_role_rancher
+---
+- import_tasks: helm.yml
+  tags:
+    - helm-install
+
+- import_tasks: rancher.yml
+  tags:
+    - rancher-install
