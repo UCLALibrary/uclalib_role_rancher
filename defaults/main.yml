@@ -5,4 +5,11 @@
 # set install_or_upgrade to 'upgrade' to use this play to upgrade rancher
 install_or_upgrade: 'install'
 
+# The version of Rancher to install
+# Example: 2.7.3
+# Reference the Rancher Helm Chart repo for available versions
+# helm search repo rancher-stable/rancher --versions
+# !!! Be sure to set this in the appropriate rancher manager group var
+rancher_version: ''
+
 cert_manager_version: 'v1.12.0'
