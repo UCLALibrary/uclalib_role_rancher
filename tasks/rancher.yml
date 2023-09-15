@@ -128,6 +128,7 @@
     cmd: |
       helm {{ install_or_upgrade | default('install') }}
         rancher rancher-stable/rancher
+        --version {{ rancher_version }}
         --namespace cattle-system
         --set hostname={{ ansible_fqdn }}
         --set replicas=1
@@ -151,6 +152,7 @@
     cmd: |
       helm {{ install_or_upgrade | default('install') }}
         rancher rancher-stable/rancher
+        --version {{ rancher_version }}
         --namespace cattle-system
         --set hostname={{ ansible_fqdn }}
         --set replicas=1
