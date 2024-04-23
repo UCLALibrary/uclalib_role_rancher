@@ -1,11 +1,18 @@
 ---
 
-- name: Download Helm Binary
+- name: Make tempfile for helm installer
+  tempfile:
+    state: file
+  register: helm_installer
+  notify: Remove helm installer
+
+- name: Get helm installer script
   get_url:
-    url: https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz
-    dest: /usr/local/bin/helm
-    owner: root
-    group: root
-    mode: 0555
-  become: true
-  
+    url: "https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
+    dest: "{{ helm_installer.path }}"
+
+- name: Install specified version of helm
+  command: >
+    /bin/bash {{ helm_installer.path }}/get-helm-3 --version {{ helm_version }}
+  environment:
+    PATH: '/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin'
